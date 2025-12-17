@@ -1,0 +1,912 @@
+import React, { useEffect, useMemo, useReducer, useState } from "react";
+
+/**
+ * Clay & Calm — Handmade pottery storefront (single-file React component)
+ *
+ * Why this rewrite?
+ * - The previous version used Next.js-only components (next/link, next/image).
+ *   If you ran it in a plain React environment (or without Next Router context),
+ *   Next Link can throw runtime errors like: "Cannot read properties of null (reading '_')".
+ * - This version is framework-agnostic: it runs in plain React, and still works in Next.js.
+ * - Also removes lucide-react dependency by using tiny inline SVG icons.
+ *
+ * Plug-in points:
+ * - Payments: Stripe/PayPal can be wired from the `handleCheckout()` area.
+ * - Inventory: each item supports inventory=1 for one-of-a-kind.
+ */
+
+// ---------- tiny icon set (no deps) ----------
+function IconCart(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M6 6h15l-1.5 8.5a2 2 0 0 1-2 1.5H9.2a2 2 0 0 1-2-1.6L5 3H2" />
+      <path d="M9 22a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+      <path d="M18 22a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+    </svg>
+  );
+}
+
+function IconInstagram(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37Z" />
+      <path d="M17.5 6.5h.01" />
+    </svg>
+  );
+}
+
+function IconFacebook(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3V2Z" />
+    </svg>
+  );
+}
+
+function IconMail(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M4 4h16v16H4V4Z" />
+      <path d="m22 6-10 7L2 6" />
+    </svg>
+  );
+}
+
+// ---------- helpers ----------
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function formatMoney(amount) {
+  // Keep it simple; swap to Intl.NumberFormat when you add real currencies.
+  const n = Math.round(Number(amount) * 100) / 100;
+  return `$${n.toFixed(2)}`;
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+// ---------- sample inventory (one-of-a-kind supported) ----------
+const PRODUCTS = [
+  {
+    id: "bowl-sand-rim",
+    name: "Sand Rim Bowl",
+    price: 78,
+    size: "M",
+    collection: "Coastal Calm",
+    inventory: 1, // one-of-a-kind
+    unique: true,
+    images: [
+      "https://images.unsplash.com/photo-1542556398-95fb5b9f49b6?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1523413651479-597eb2da0ad6?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&w=1400&q=80",
+    ],
+    description:
+      "A softly curved bowl with a warm sand-toned rim. Thrown by hand, glazed with subtle variation that catches afternoon light.",
+    dimensions: "Ø 18cm × H 6cm",
+    care: "Dishwasher safe (top rack). Avoid sudden temperature changes.",
+    shipping: "Ships in 2–4 business days. Gift-ready packaging included.",
+  },
+  {
+    id: "mug-soft-turquoise",
+    name: "Soft Turquoise Mug",
+    price: 52,
+    size: "S",
+    collection: "Studio Mornings",
+    inventory: 4,
+    unique: false,
+    images: [
+      "https://images.unsplash.com/photo-1610385301018-3e1c6f8263d5?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1536935338788-846bb9981813?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=1400&q=80",
+    ],
+    description:
+      "A cozy everyday mug with a soft turquoise wash—glaze breaks naturally on edges for that handmade luxury feel.",
+    dimensions: "350ml · Ø 8.5cm × H 9cm",
+    care: "Microwave safe. Hand wash recommended to preserve glaze sheen.",
+    shipping: "Ships in 2–4 business days. Protective foam + double box.",
+  },
+  {
+    id: "vase-clay-curve",
+    name: "Clay Curve Vase",
+    price: 120,
+    size: "L",
+    collection: "Earth Forms",
+    inventory: 1,
+    unique: true,
+    images: [
+      "https://images.unsplash.com/photo-1582582429400-7a6b340b8d4b?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1519710164239-da123dc03ef4?auto=format&fit=crop&w=1400&q=80",
+      "https://images.unsplash.com/photo-1523413454023-4e0b1d2355f1?auto=format&fit=crop&w=1400&q=80",
+    ],
+    description:
+      "A sculptural vase with an organic curve. Natural clay body with a satin, off-white glaze that feels like linen.",
+    dimensions: "Ø 12cm × H 22cm",
+    care: "Wipe clean. Suitable for fresh flowers; use a liner for long-term water.",
+    shipping: "Ships in 3–6 business days due to size and packing.",
+  },
+];
+
+// ---------- cart reducer (inventory-aware) ----------
+function cartReducer(state, action) {
+  switch (action.type) {
+    case "ADD": {
+      const { id } = action;
+      const product = PRODUCTS.find((p) => p.id === id);
+      if (!product) return state;
+
+      const currentQty = state.items[id] ?? 0;
+      const nextQty = clamp(currentQty + 1, 0, product.inventory);
+      // If item is sold out (inventory 0), do nothing.
+      if (product.inventory <= 0) return state;
+
+      return {
+        ...state,
+        items: {
+          ...state.items,
+          [id]: nextQty,
+        },
+      };
+    }
+    case "REMOVE": {
+      const { id } = action;
+      const next = { ...state.items };
+      delete next[id];
+      return { ...state, items: next };
+    }
+    case "SET_QTY": {
+      const { id, qty } = action;
+      const product = PRODUCTS.find((p) => p.id === id);
+      if (!product) return state;
+      const safeQty = clamp(Number(qty) || 0, 0, product.inventory);
+      const next = { ...state.items };
+      if (safeQty <= 0) delete next[id];
+      else next[id] = safeQty;
+      return { ...state, items: next };
+    }
+    case "CLEAR": {
+      return { ...state, items: {} };
+    }
+    default:
+      return state;
+  }
+}
+
+function useCartTotals(cart) {
+  return useMemo(() => {
+    const lines = Object.entries(cart.items)
+      .map(([id, qty]) => {
+        const product = PRODUCTS.find((p) => p.id === id);
+        if (!product) return null;
+        return {
+          id,
+          qty,
+          product,
+          lineTotal: product.price * qty,
+        };
+      })
+      .filter(Boolean);
+
+    const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+    const shipping = subtotal > 0 ? 9 : 0; // placeholder rule
+    const tax = subtotal > 0 ? subtotal * 0.05 : 0; // placeholder rule
+    const total = subtotal + shipping + tax;
+
+    return { lines, subtotal, shipping, tax, total };
+  }, [cart.items]);
+}
+
+// ---------- UI pieces ----------
+function NavAnchor({ href, children, className, onClick }) {
+  // Works everywhere: plain React, Next, etc.
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        // Smooth scroll within the same page.
+        if (href.startsWith("#")) {
+          const el = document.querySelector(href);
+          if (el) {
+            e.preventDefault();
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+        onClick?.(e);
+      }}
+      className={className}
+    >
+      {children}
+    </a>
+  );
+}
+
+function Badge({ children }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-[#D8D3CC] bg-white/70 px-3 py-1 text-xs text-[#5A5652]">
+      {children}
+    </span>
+  );
+}
+
+function SoftButton({ children, className, ...props }) {
+  return (
+    <button
+      className={cn(
+        "rounded-xl px-4 py-2 text-sm shadow-sm transition active:scale-[0.99]",
+        "focus:outline-none focus:ring-2 focus:ring-[#7AA29E]/60 focus:ring-offset-2 focus:ring-offset-[#F6F4EF]",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Card({ children, className }) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl bg-white/80 shadow-sm ring-1 ring-black/5 backdrop-blur-sm",
+        "transition hover:shadow-md",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ProductCard({ product, onOpen, onAdd }) {
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        onClick={() => onOpen(product)}
+        className="group relative block w-full text-left"
+        aria-label={`Open ${product.name}`}
+      >
+        <div className="relative aspect-[4/5] w-full overflow-hidden">
+          <img
+            src={product.images[0]}
+            alt={product.name}
+            loading="lazy"
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+          />
+          <div className="absolute left-4 top-4 flex gap-2">
+            {product.unique && <Badge>Each piece is unique</Badge>}
+            {product.inventory <= 1 && <Badge>Limited</Badge>}
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-lg font-serif tracking-wide">{product.name}</h4>
+              <p className="mt-1 text-sm text-[#7A746E]">{product.collection} · {product.size}</p>
+            </div>
+            <p className="text-sm text-[#2F2C28]">{formatMoney(product.price)}</p>
+          </div>
+        </div>
+      </button>
+      <div className="px-4 pb-4">
+        <SoftButton
+          onClick={() => onAdd(product.id)}
+          className={cn(
+            "w-full bg-[#7AA29E] text-white hover:bg-[#689089]",
+            product.inventory <= 0 && "cursor-not-allowed opacity-50 hover:bg-[#7AA29E]"
+          )}
+          disabled={product.inventory <= 0}
+        >
+          {product.inventory <= 0 ? "Sold out" : "Add to Cart"}
+        </SoftButton>
+      </div>
+    </Card>
+  );
+}
+
+function Modal({ open, title, children, onClose }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[100]">
+      <div
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl rounded-t-3xl bg-[#F6F4EF] p-6 shadow-2xl ring-1 ring-black/10 md:inset-y-10 md:bottom-auto md:rounded-3xl">
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="text-xl font-serif tracking-wide">{title}</h3>
+          <SoftButton className="bg-white hover:bg-white/90" onClick={onClose}>
+            Close
+          </SoftButton>
+        </div>
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ProductModal({ product, open, onClose, onAdd }) {
+  const [active, setActive] = useState(0);
+
+  useEffect(() => {
+    if (open) setActive(0);
+  }, [open]);
+
+  if (!product) return null;
+
+  return (
+    <Modal open={open} title={product.name} onClose={onClose}>
+      <div className="grid gap-6 md:grid-cols-2">
+        <div>
+          <div className="relative aspect-[4/5] overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
+            <img
+              src={product.images[active]}
+              alt={`${product.name} image ${active + 1}`}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+            <div className="absolute left-4 top-4 flex gap-2">
+              {product.unique && <Badge>Each piece is unique</Badge>}
+            </div>
+          </div>
+          <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
+            {product.images.map((src, i) => (
+              <button
+                key={src}
+                type="button"
+                onClick={() => setActive(i)}
+                className={cn(
+                  "h-16 w-16 flex-none overflow-hidden rounded-xl ring-1 ring-black/10",
+                  i === active ? "ring-2 ring-[#7AA29E]" : "opacity-80 hover:opacity-100"
+                )}
+                aria-label={`Select image ${i + 1}`}
+              >
+                <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-[#7A746E]">{product.collection} · {product.size}</p>
+              <p className="mt-2 text-2xl font-serif">{formatMoney(product.price)}</p>
+            </div>
+            <Badge>{product.inventory <= 1 ? "One-of-a-kind" : `${product.inventory} in studio`}</Badge>
+          </div>
+
+          <p className="mt-4 text-sm leading-relaxed text-[#5A5652]">{product.description}</p>
+
+          <div className="mt-6 space-y-3 text-sm text-[#5A5652]">
+            <div>
+              <p className="font-medium text-[#2F2C28]">Dimensions</p>
+              <p>{product.dimensions}</p>
+            </div>
+            <div>
+              <p className="font-medium text-[#2F2C28]">Care</p>
+              <p>{product.care}</p>
+            </div>
+            <div>
+              <p className="font-medium text-[#2F2C28]">Shipping</p>
+              <p>{product.shipping}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex gap-3">
+            <SoftButton
+              onClick={() => onAdd(product.id)}
+              className={cn(
+                "flex-1 bg-[#7AA29E] text-white hover:bg-[#689089]",
+                product.inventory <= 0 && "cursor-not-allowed opacity-50 hover:bg-[#7AA29E]"
+              )}
+              disabled={product.inventory <= 0}
+            >
+              {product.inventory <= 0 ? "Sold out" : "Add to Cart"}
+            </SoftButton>
+            <SoftButton className="bg-white hover:bg-white/90" onClick={onClose}>
+              Keep browsing
+            </SoftButton>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CartDrawer({ open, onClose, cart, dispatch }) {
+  const { lines, subtotal, shipping, tax, total } = useCartTotals(cart);
+
+  const handleCheckout = () => {
+    // TODO: Wire Stripe/PayPal here.
+    // For Stripe: create a Checkout Session server-side, then redirect.
+    // For PayPal: render PayPal Buttons with order create/capture.
+    // This placeholder keeps the UI flow distraction-free.
+    alert("Checkout integration placeholder. Wire Stripe/PayPal in handleCheckout().");
+  };
+
+  return (
+    <Modal open={open} title="Your Cart" onClose={onClose}>
+      {lines.length === 0 ? (
+        <div className="py-10 text-center">
+          <p className="text-sm text-[#5A5652]">Your cart is empty.</p>
+          <SoftButton className="mt-4 bg-[#7AA29E] text-white hover:bg-[#689089]" onClick={onClose}>
+            Continue shopping
+          </SoftButton>
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-[1fr_320px]">
+          <div className="space-y-4">
+            {lines.map((l) => (
+              <div key={l.id} className="flex gap-4 rounded-2xl bg-white/70 p-4 ring-1 ring-black/5">
+                <div className="h-20 w-20 flex-none overflow-hidden rounded-xl ring-1 ring-black/10">
+                  <img src={l.product.images[0]} alt={l.product.name} className="h-full w-full object-cover" loading="lazy" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-serif tracking-wide">{l.product.name}</p>
+                      <p className="mt-1 text-xs text-[#7A746E]">{l.product.collection} · {l.product.size}</p>
+                    </div>
+                    <p className="text-sm">{formatMoney(l.lineTotal)}</p>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-[#7A746E]" htmlFor={`qty-${l.id}`}>
+                        Qty
+                      </label>
+                      <input
+                        id={`qty-${l.id}`}
+                        type="number"
+                        min={1}
+                        max={l.product.inventory}
+                        value={l.qty}
+                        onChange={(e) => dispatch({ type: "SET_QTY", id: l.id, qty: e.target.value })}
+                        className="w-16 rounded-lg border border-[#D8D3CC] bg-white px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+                      />
+                      {l.product.unique && <Badge>Unique</Badge>}
+                    </div>
+                    <button
+                      className="text-xs text-[#7AA29E] hover:underline"
+                      onClick={() => dispatch({ type: "REMOVE", id: l.id })}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-2xl bg-white/70 p-5 ring-1 ring-black/5">
+            <p className="font-serif text-lg">Summary</p>
+            <div className="mt-4 space-y-2 text-sm text-[#5A5652]">
+              <div className="flex items-center justify-between">
+                <span>Subtotal</span>
+                <span>{formatMoney(subtotal)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Shipping</span>
+                <span>{formatMoney(shipping)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Tax</span>
+                <span>{formatMoney(tax)}</span>
+              </div>
+              <div className="my-3 h-px bg-[#D8D3CC]" />
+              <div className="flex items-center justify-between text-[#2F2C28]">
+                <span className="font-medium">Total</span>
+                <span className="font-medium">{formatMoney(total)}</span>
+              </div>
+            </div>
+
+            <SoftButton
+              className="mt-5 w-full bg-[#7AA29E] text-white hover:bg-[#689089]"
+              onClick={handleCheckout}
+            >
+              Checkout
+            </SoftButton>
+
+            <p className="mt-3 text-xs text-[#7A746E]">
+              Calm checkout. No surprises. Payment integration is ready to be wired.
+            </p>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ---------- main page ----------
+export default function HandmadePotterySite() {
+  const [cart, dispatch] = useReducer(cartReducer, { items: {} });
+  const [cartOpen, setCartOpen] = useState(false);
+  const [activeProduct, setActiveProduct] = useState(null);
+  const [productOpen, setProductOpen] = useState(false);
+
+  const cartCount = useMemo(() => Object.values(cart.items).reduce((sum, n) => sum + n, 0), [cart.items]);
+
+  const openProduct = (p) => {
+    setActiveProduct(p);
+    setProductOpen(true);
+  };
+
+  const addToCart = (id) => {
+    dispatch({ type: "ADD", id });
+    setCartOpen(true);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F6F4EF] text-[#2F2C28]">
+      {/*
+        Tip: If Tailwind isn't configured, the styling won't apply.
+        This component still renders and functions without crashing.
+      */}
+
+      {/* Navbar */}
+      <nav className="sticky top-0 z-50 border-b border-[#D8D3CC] bg-[#F6F4EF]/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-2xl bg-[#7AA29E]/15 ring-1 ring-black/5" aria-hidden="true" />
+            <div>
+              <p className="text-lg font-serif tracking-wide">Clay & Calm</p>
+              <p className="text-xs text-[#7A746E]">Handmade studio pottery</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6 text-sm">
+            <NavAnchor href="#shop" className="hover:text-[#7AA29E] transition">
+              Shop
+            </NavAnchor>
+            <NavAnchor href="#about" className="hover:text-[#7AA29E] transition">
+              About
+            </NavAnchor>
+            <NavAnchor href="#contact" className="hover:text-[#7AA29E] transition">
+              Contact
+            </NavAnchor>
+
+            <button
+              type="button"
+              onClick={() => setCartOpen(true)}
+              className="relative rounded-xl p-2 transition hover:bg-white/60 focus:outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+              aria-label="Open cart"
+            >
+              <IconCart className="h-5 w-5" />
+              {cartCount > 0 && (
+                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#7AA29E] px-1 text-[11px] font-medium text-white">
+                  {cartCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Home / Hero */}
+      <header className="bg-[#EDE8E1]">
+        <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 md:grid-cols-2 md:py-20">
+          <div className="flex flex-col justify-center">
+            <div className="flex flex-wrap gap-2">
+              <Badge>Earthy tones</Badge>
+              <Badge>Studio-made</Badge>
+              <Badge>Quiet luxury</Badge>
+            </div>
+
+            <h1 className="mt-6 font-serif text-4xl tracking-wide md:text-6xl">
+              Handmade pottery that makes the room feel softer.
+            </h1>
+            <p className="mt-4 max-w-xl text-base leading-relaxed text-[#5A5652] md:text-lg">
+              Each piece is thrown, trimmed, and glazed by hand—so the tiny variations aren’t flaws. They’re proof.
+              Calm, artsy, minimal. Like a cozy studio—never an Amazon knockoff.
+            </p>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <NavAnchor
+                href="#shop"
+                className="inline-flex items-center justify-center rounded-full bg-[#7AA29E] px-8 py-3 text-white shadow-md transition hover:bg-[#689089]"
+              >
+                Shop Now
+              </NavAnchor>
+              <NavAnchor
+                href="#about"
+                className="inline-flex items-center justify-center rounded-full bg-white/70 px-8 py-3 text-[#2F2C28] shadow-sm ring-1 ring-black/5 transition hover:bg-white"
+              >
+                Meet the artist
+              </NavAnchor>
+            </div>
+
+            <div className="mt-8 rounded-2xl bg-white/50 p-4 ring-1 ring-black/5">
+              <p className="text-sm text-[#5A5652]">
+                <span className="font-medium text-[#2F2C28]">Care & shipping:</span> Every order is packed like it’s going to war.
+                Care instructions included. Calm delivery energy.
+              </p>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="absolute -left-6 -top-6 h-28 w-28 rounded-3xl bg-[#7AA29E]/15 blur-[1px]" aria-hidden="true" />
+            <div className="absolute -bottom-6 -right-6 h-28 w-28 rounded-3xl bg-[#C48C6A]/20 blur-[1px]" aria-hidden="true" />
+
+            <div className="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-black/5">
+              <div className="relative aspect-[5/6]">
+                <img
+                  src="https://images.unsplash.com/photo-1523413651479-597eb2da0ad6?auto=format&fit=crop&w=1400&q=80"
+                  alt="A calm pottery studio table with handmade ceramic pieces"
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                />
+                <div className="absolute bottom-4 left-4 right-4 rounded-2xl bg-[#F6F4EF]/85 p-4 backdrop-blur-sm ring-1 ring-black/5">
+                  <p className="text-sm text-[#5A5652]">
+                    New drops sell out fast because most items are literally one-of-one.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              {PRODUCTS.slice(0, 3).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => openProduct(p)}
+                  className="group overflow-hidden rounded-2xl bg-white/70 ring-1 ring-black/5 transition hover:shadow-md"
+                  aria-label={`Preview ${p.name}`}
+                >
+                  <div className="aspect-square">
+                    <img src={p.images[0]} alt="" className="h-full w-full object-cover transition group-hover:scale-[1.03]" loading="lazy" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Shop */}
+      <main>
+        <section id="shop" className="mx-auto max-w-6xl px-5 py-14 md:py-20">
+          <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
+            <div>
+              <h2 className="font-serif text-3xl tracking-wide md:text-4xl">Shop the collection</h2>
+              <p className="mt-2 text-sm text-[#5A5652] md:text-base">
+                Filters are UI-ready (price, size, collection). Wire them to your CMS later.
+              </p>
+            </div>
+
+            {/* Filters (UI only; hook to state/CMS as needed) */}
+            <div className="flex w-full flex-col gap-3 sm:flex-row md:w-auto">
+              <select className="w-full rounded-xl border border-[#D8D3CC] bg-white/70 px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60 sm:w-48">
+                <option>Price: Any</option>
+                <option>Under $60</option>
+                <option>$60 – $100</option>
+                <option>$100+</option>
+              </select>
+              <select className="w-full rounded-xl border border-[#D8D3CC] bg-white/70 px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60 sm:w-44">
+                <option>Size: Any</option>
+                <option>S</option>
+                <option>M</option>
+                <option>L</option>
+              </select>
+              <select className="w-full rounded-xl border border-[#D8D3CC] bg-white/70 px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60 sm:w-56">
+                <option>Collection: Any</option>
+                <option>Coastal Calm</option>
+                <option>Studio Mornings</option>
+                <option>Earth Forms</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {PRODUCTS.map((p) => (
+              <ProductCard key={p.id} product={p} onOpen={openProduct} onAdd={addToCart} />
+            ))}
+          </div>
+
+          {/* Email signup */}
+          <div className="mt-14 overflow-hidden rounded-3xl bg-[#EDE8E1] p-6 ring-1 ring-black/5 md:p-10">
+            <div className="grid gap-6 md:grid-cols-[1fr_420px] md:items-center">
+              <div>
+                <h3 className="font-serif text-2xl tracking-wide">Get first dibs on new drops</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[#5A5652]">
+                  No spam. Just calm studio updates and small-batch releases.
+                </p>
+              </div>
+              <form
+                className="flex flex-col gap-3 sm:flex-row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  alert("Signup placeholder. Connect this to your email provider.");
+                }}
+              >
+                <input
+                  type="email"
+                  required
+                  placeholder="you@domain.com"
+                  className="w-full rounded-xl border border-[#D8D3CC] bg-white/70 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+                />
+                <SoftButton className="bg-[#7AA29E] text-white hover:bg-[#689089]">Subscribe</SoftButton>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        {/* About */}
+        <section id="about" className="bg-[#EDE8E1]">
+          <div className="mx-auto max-w-6xl px-5 py-14 md:py-20">
+            <div className="grid gap-10 md:grid-cols-2 md:items-center">
+              <div>
+                <h2 className="font-serif text-3xl tracking-wide md:text-4xl">Made slowly, on purpose</h2>
+                <p className="mt-4 text-sm leading-relaxed text-[#5A5652] md:text-base">
+                  Clay & Calm began in a small coastal studio—wheel spinning, hands dusty, music low.
+                  Every piece is thrown, trimmed, bisque-fired, glazed, and fired again. No shortcuts.
+                  That’s the whole point.
+                </p>
+                <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                  <Card className="p-4">
+                    <p className="font-medium">Handmade authenticity</p>
+                    <p className="mt-1 text-sm text-[#5A5652]">Subtle variation = real human hands.</p>
+                  </Card>
+                  <Card className="p-4">
+                    <p className="font-medium">One-of-a-kind pieces</p>
+                    <p className="mt-1 text-sm text-[#5A5652]">Many items are truly unique.</p>
+                  </Card>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-black/5">
+                <div className="relative aspect-[4/3]">
+                  <img
+                    src="https://images.unsplash.com/photo-1523413651479-597eb2da0ad6?auto=format&fit=crop&w=1400&q=80"
+                    alt="Hands shaping clay on a pottery wheel"
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Contact */}
+        <section id="contact" className="mx-auto max-w-6xl px-5 py-14 md:py-20">
+          <div className="grid gap-10 md:grid-cols-2">
+            <div>
+              <h2 className="font-serif text-3xl tracking-wide md:text-4xl">Contact</h2>
+              <p className="mt-4 text-sm leading-relaxed text-[#5A5652] md:text-base">
+                Want a custom glaze? A matching set? Or just a vibe check? Send a message.
+              </p>
+
+              <div className="mt-6 flex gap-4 text-[#5A5652]">
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    alert("Social link placeholder.");
+                  }}
+                  className="rounded-xl p-2 transition hover:bg-white/60"
+                  aria-label="Instagram"
+                >
+                  <IconInstagram className="h-5 w-5" />
+                </a>
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    alert("Social link placeholder.");
+                  }}
+                  className="rounded-xl p-2 transition hover:bg-white/60"
+                  aria-label="Facebook"
+                >
+                  <IconFacebook className="h-5 w-5" />
+                </a>
+                <a
+                  href="mailto:hello@clayandcalm.com"
+                  className="rounded-xl p-2 transition hover:bg-white/60"
+                  aria-label="Email"
+                >
+                  <IconMail className="h-5 w-5" />
+                </a>
+              </div>
+            </div>
+
+            <Card className="p-6">
+              <form
+                className="flex flex-col gap-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  alert("Form submit placeholder. Wire to your backend or email service.");
+                }}
+              >
+                <input
+                  type="text"
+                  required
+                  placeholder="Your name"
+                  className="rounded-xl border border-[#D8D3CC] bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+                />
+                <input
+                  type="email"
+                  required
+                  placeholder="Your email"
+                  className="rounded-xl border border-[#D8D3CC] bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+                />
+                <textarea
+                  required
+                  placeholder="Your message"
+                  className="min-h-[140px] rounded-xl border border-[#D8D3CC] bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#7AA29E]/60"
+                />
+                <SoftButton className="bg-[#7AA29E] text-white hover:bg-[#689089]">Send message</SoftButton>
+              </form>
+            </Card>
+          </div>
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-[#D8D3CC]">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-10 text-sm text-[#7A746E] md:flex-row md:items-center md:justify-between">
+          <p>© {new Date().getFullYear()} Clay & Calm. All rights reserved.</p>
+          <p>
+            Built for fast loading: responsive images + lazy loading. SEO-ready structure (semantic headings).
+          </p>
+        </div>
+      </footer>
+
+      {/* Modals */}
+      <ProductModal
+        product={activeProduct}
+        open={productOpen}
+        onClose={() => setProductOpen(false)}
+        onAdd={addToCart}
+      />
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} cart={cart} dispatch={dispatch} />
+    </div>
+  );
+}
+
+// ---------- minimal tests (won't affect runtime if your environment doesn't run them) ----------
+// If you use Vitest/Jest + React Testing Library, these give you a quick sanity check.
+// They are guarded so they won't throw in environments without a test runner.
+if (typeof describe === "function") {
+  describe("cartReducer", () => {
+    it("adds items but clamps to inventory", () => {
+      const p = PRODUCTS.find((x) => x.id === "bowl-sand-rim");
+      const s0 = { items: {} };
+      const s1 = cartReducer(s0, { type: "ADD", id: p.id });
+      const s2 = cartReducer(s1, { type: "ADD", id: p.id }); // inventory=1, should clamp
+      expect(s1.items[p.id]).toBe(1);
+      expect(s2.items[p.id]).toBe(1);
+    });
+
+    it("removes items", () => {
+      const s0 = { items: { "mug-soft-turquoise": 2 } };
+      const s1 = cartReducer(s0, { type: "REMOVE", id: "mug-soft-turquoise" });
+      expect(s1.items["mug-soft-turquoise"]).toBeUndefined();
+    });
+
+    it("sets qty to 0 to remove", () => {
+      const s0 = { items: { "mug-soft-turquoise": 2 } };
+      const s1 = cartReducer(s0, { type: "SET_QTY", id: "mug-soft-turquoise", qty: 0 });
+      expect(s1.items["mug-soft-turquoise"]).toBeUndefined();
+    });
+
+    it("clamps qty to inventory", () => {
+      const s0 = { items: {} };
+      const s1 = cartReducer(s0, { type: "SET_QTY", id: "mug-soft-turquoise", qty: 999 });
+      const p = PRODUCTS.find((x) => x.id === "mug-soft-turquoise");
+      expect(s1.items[p.id]).toBe(p.inventory);
+    });
+  });
+}
